@@ -13,7 +13,7 @@
 ## 3. Tweet Tokenizer
 <p align='justify'>Tweet Tokenizer dirancang khusus untuk memproses teks dari platform media sosial seperti Twitter. Tokenizer ini mempertimbangkan elemen-elemen khusus seperti tagar (#), mention (@), emotikon, dan lainnya.</p>
 
-## N-gram Tokenizer
+## 4. N-gram Tokenizer
 <p align='justify'>N-gram Tokenizer memecah teks menjadi kelompok kata yang terdiri dari n kata berturut-turut. Ini berguna untuk analisis teks lanjutan, seperti model bahasa dan deteksi urutan kata.</p>
 
 ## Kesimpulan
