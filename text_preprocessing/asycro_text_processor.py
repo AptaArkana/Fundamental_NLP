@@ -1,190 +1,201 @@
 import re
 import json
 import emoji
+from nlp_id.stopword import StopWord
+from Sastrawi.Stemmer.StemmerFactory import StemmerFactory
+from concurrent.futures import ProcessPoolExecutor
+import asyncio
+import rootutils
+
+ROOT = rootutils.autosetup()  # set root path
+
+class TextProcessor:
+    def __init__(self, kata_tambahan=None):
+        self.stopword = StopWord()  # list of stopwords
+        self.slang_words = self.load_slang_words(str(ROOT / 'dataset/combined_slang_words.txt'))  # load slang words from json
+        self.kata_tambahan = kata_tambahan if kata_tambahan else ["t", "n", " t", " n", " n ", "dengan", "yang", "dan"]  # additional stop words
+
+        # Initialize stemmer
+        factory = StemmerFactory()
+        self.stemmer = factory.create_stemmer()
+
+    def load_slang_words(self, file_path):
+        with open(file_path, 'r') as f:
+            return json.load(f)
+
+    def clean_text_sync(self, text):
+        emoticon_byte_regex = r"\s*(?:\\x[A-Fa-f0-9]{2})+"
+        url_regex = r"((www\.[^\s]+)|(https?://[^\s]+)|(http?://[^\s]+)||(http\S+))"
+        
+        text = re.sub(emoticon_byte_regex, "", text)
+        text = re.sub(url_regex, "", text)
+        text = re.sub(r"<[^>]*>", "", text)
+        text = re.sub(r"@[A-Za-z0-9]+", "", text)
+        text = re.sub(r"\n", " ", text)
+        text = re.sub("@[\w\-]+", "", text)
+        text = re.sub("RT", "", text)
+        text = re.sub("USER", "", text)
+        text = re.sub(" URL", " ", text)
+        text = re.sub(" url", " ", text)
+        text = re.sub("\+", " ", text)
+        text = re.sub("\s+", " ", text)
+        text = re.sub("[^0-9a-zA-Z]", " ", text)
+        text = re.sub("[^a-zA-Z]", " ", text)
+        text = re.sub(" +", " ", text)
+        text = re.sub(r'http\S+', '', text)
+        text = re.sub(r'#\w+', '', text)
+        text = re.sub(r'@\w+', '', text)
+        text = re.sub(r'RT', '', text)
+        text = re.sub(r'[^\w\s]', '', text)
+        text = re.sub(r'\n', ' ', text)
+        text = re.sub(r'\d+', '', text)
+        text = emoji.demojize(text)
+        text = ' '.join(text.split())
+        text = text.strip()
+        return text
+
+    def replace_slang_words_sync(self, text):
+        text = text.lower()
+        text = re.sub(r'\n', ' ', text)
+        text = re.sub(r'\s+', ' ', text)
+        words = text.split()
+        new_words = [self.slang_words.get(word, word) for word in words]
+        return ' '.join(new_words)
+
+    def remove_stopwords_sync(self, caption):
+        filtered_caption = ' '.join([word for word in caption.split() if word not in self.kata_tambahan])
+        return self.stopword.remove_stopword(filtered_caption)
+
+    def stem_text_sync(self, text):
+        return self.stemmer.stem(text)
+
+    def process_single_text_sync(self, text):
+        # Combine all synchronous processing steps into one function
+        text = self.clean_text_sync(text)
+        text = self.replace_slang_words_sync(text)
+        text = self.stem_text_sync(text)
+        text = self.remove_stopwords_sync(text)
+        return text
+
+    async def process_texts(self, texts):
+        # Use ProcessPoolExecutor for multiprocessing
+        loop = asyncio.get_event_loop()
+        with ProcessPoolExecutor() as executor:
+            tasks = [loop.run_in_executor(executor, self.process_single_text_sync, text) for text in texts]
+            results = await asyncio.gather(*tasks)
+        return results
+
+"""
+import re
+import json
+import emoji
 import asyncio
 from nlp_id.stopword import StopWord
+from Sastrawi.Stemmer.StemmerFactory import StemmerFactory
 
 import rootutils
 
-ROOT = rootutils.autosetup() # mengatur root path
+ROOT = rootutils.autosetup()  # mengatur root path
 
 class TextProcessor:
-    """
-    Class TextProcessor digunakan untuk memproses teks dengan melakukan pembersihan teks, 
-    mengganti kata-kata slang, menghapus stopwords, dan memproses teks.
-    
-    Atribut:
-        stopword (StopWord): Objek untuk mengelola stopwords.
-        slang_words (dict): Kamus berisi kata-kata slang dan pengganti mereka.
-        kata_tambahan (list): Daftar kata tambahan yang ingin dihapus dari teks.
-    """
     def __init__(self, kata_tambahan=None):
-        """
-        Inisialisasi objek TextProcessor.
-        
-        Args:
-            kata_tambahan (list, optional): Daftar kata tambahan untuk dihapus. 
-                                            Jika None, akan menggunakan daftar default.
-        """
-        self.stopword = StopWord() # list stoword
-        self.slang_words = self.load_slang_words(str(ROOT /'dataset\combined_slang_words.txt')) # load slangword dalam bentuk json
-        self.kata_tambahan = kata_tambahan if kata_tambahan else ["t", "n", " t", " n", " n ", "dengan", "yang", "dan"] # list kata kata tambahan untuk stop word
+        self.stopword = StopWord()  # list stoword
+        self.slang_words = self.load_slang_words(str(ROOT / 'dataset/combined_slang_words.txt'))  # load slangword dalam bentuk json
+        self.kata_tambahan = kata_tambahan if kata_tambahan else ["t", "n", " t", " n", " n ", "dengan", "yang", "dan"]  # list kata kata tambahan untuk stop word
+
+        # Inisialisasi stemmer
+        factory = StemmerFactory()
+        self.stemmer = factory.create_stemmer()
 
     def load_slang_words(self, file_path):
-        """
-        Memuat kata-kata slang dari file JSON.
-        
-        Args:
-            file_path (str): Path ke file JSON yang berisi kata-kata slang.
-        
-        Returns:
-            dict: Kamus berisi kata-kata slang dan pengganti mereka.
-        """
-        # untuk load file slangword dalam bentuk json
         with open(file_path, 'r') as f:
             return json.load(f)
 
     async def clean_text(self, text):
-        """
-        Membersihkan teks dari emoticon, URL, tag HTML, nama pengguna, RT, dan simbol lainnya.
+        emoticon_byte_regex = r"\s*(?:\\x[A-Fa-f0-9]{2})+"
+        url_regex = r"((www\.[^\s]+)|(https?://[^\s]+)|(http?://[^\s]+)||(http\S+))"
         
-        Args:
-            text (str): Teks yang akan dibersihkan.
-        
-        Returns:
-            str: Teks yang telah dibersihkan.
-        """
-        emoticon_byte_regex = r"\s*(?:\\x[A-Fa-f0-9]{2})+"  # untuk mendeteksi dan menghapus byte emoticon (karakter yang di-encode sebagai \xHH, di mana H adalah digit heksadesimal).
-        url_regex = r"((www\.[^\s]+)|(https?://[^\s]+)|(http?://[^\s]+)||(http\S+))" # ini digunakan untuk mendeteksi dan menghapus URL dari teks.
-
-        text = re.sub(emoticon_byte_regex, "", text)  # menghapus byte emoticon
-        text = re.sub(url_regex, "", text)  # menghapus setiap URL
-        text = re.sub(r"<[^>]*>", "", text)  # menghapus tag HTML
-        text = re.sub(r"@[A-Za-z0-9]+", "", text)  # menghapus nama pengguna Twitter
-        text = re.sub(r"\n", " ", text)  # menghapus setiap baris baru '\n'
-        text = re.sub("@[\w\-]+", "", text)  # menghapus mention
-        text = re.sub("RT", "", text)  # menghapus simbol retweet
-        text = re.sub("USER", "", text)  # menghapus setiap kata "USER"
-        text = re.sub(" URL", " ", text)  # menghapus kata "URL"
-        text = re.sub(" url", " ", text)  # menghapus kata "url"
-        text = re.sub("\+", " ", text)  # menghapus backslash
-        text = re.sub("\s+", " ", text)  # menghapus karakter khusus ekspresi reguler
-        text = re.sub("[^0-9a-zA-Z]", " ", text)  # menghapus tanda baca
-        text = re.sub("[^a-zA-Z]", " ", text)  # menghapus angka
-        text = re.sub(" +", " ", text)  # menghapus spasi ekstra
-        # Menghapus URL atau tautan
+        text = re.sub(emoticon_byte_regex, "", text)
+        text = re.sub(url_regex, "", text)
+        text = re.sub(r"<[^>]*>", "", text)
+        text = re.sub(r"@[A-Za-z0-9]+", "", text)
+        text = re.sub(r"\n", " ", text)
+        text = re.sub("@[\w\-]+", "", text)
+        text = re.sub("RT", "", text)
+        text = re.sub("USER", "", text)
+        text = re.sub(" URL", " ", text)
+        text = re.sub(" url", " ", text)
+        text = re.sub("\+", " ", text)
+        text = re.sub("\s+", " ", text)
+        text = re.sub("[^0-9a-zA-Z]", " ", text)
+        text = re.sub("[^a-zA-Z]", " ", text)
+        text = re.sub(" +", " ", text)
         text = re.sub(r'http\S+', '', text)
-        # Menghapus hashtag (#)
         text = re.sub(r'#\w+', '', text)
-        # Menghapus nama pengguna dan mention (@)
         text = re.sub(r'@\w+', '', text)
-        # Menghapus retweet (RT)
         text = re.sub(r'RT', '', text)
-        # Menghapus tanda baca, baris baru, angka, spasi kosong, dan emoji
         text = re.sub(r'[^\w\s]', '', text)
         text = re.sub(r'\n', ' ', text)
         text = re.sub(r'\d+', '', text)
-        # Menghapus emoji (Anda dapat menambahkan pola emoji lainnya)
         text = emoji.demojize(text)
-        # Menghapus spasi ekstra dan spasi di awal/akhir
         text = ' '.join(text.split())
         text = text.strip()
         await asyncio.sleep(2)
         return text
 
     async def replace_slang_words(self, text):
-        """
-        Mengganti kata-kata slang dalam teks dengan padanan formalnya.
-        
-        Args:
-            text (str): Teks yang akan diproses.
-        
-        Returns:
-            str: Teks dengan kata-kata slang yang telah diganti.
-        """
-        text = text.lower() # casefolding lower
-        text = re.sub(r'\n', ' ', text) # menghapus new line 
-        text = re.sub(r'\s+', ' ', text) # mengahapus spasi berlebih
-        words = text.split() # memotong kalimat
-        new_words = [] # variabel untuk menampung kata kata yang sudah dinormalisasikan
-        for word in words: # looping untuk normalisasikan
-            if word in self.slang_words: # pengecekan slangword
+        text = text.lower()
+        text = re.sub(r'\n', ' ', text)
+        text = re.sub(r'\s+', ' ', text)
+        words = text.split()
+        new_words = []
+        for word in words:
+            if word in self.slang_words:
                 new_words.append(self.slang_words[word])
             else:
                 new_words.append(word)
-        new_text = ' '.join(new_words) # menyatukan menjadi kalimat
+        new_text = ' '.join(new_words)
         await asyncio.sleep(2)
         return new_text
 
     async def remove_sentence(self, caption):
-        """
-        Menghapus kalimat jika hanya terdiri dari satu kata atau kurang.
-        
-        Args:
-            caption (str): Teks yang akan diproses.
-        
-        Returns:
-            str: Teks setelah menghapus kalimat yang tidak diinginkan.
-        """
-        word = caption.split() # memotong kalimat
-        wordCount = len(word) # pengecekan panjang kata
-        if wordCount <= 1: # kondisi kata kurang dari samadengan 1
+        word = caption.split()
+        wordCount = len(word)
+        if wordCount <= 1:
             caption = ''
         await asyncio.sleep(2)
         return caption
 
     async def remove_stopwords(self, caption):
-        """
-        Menghapus stopwords dari teks, termasuk kata tambahan yang ditentukan.
-        
-        Args:
-            caption (str): Teks yang akan diproses.
-        
-        Returns:
-            str: Teks setelah stopwords dihapus.
-        """
-        # Hapus kata-kata yang ada di self.kata_tambahan
         filtered_caption = ' '.join([word for word in caption.split() if word not in self.kata_tambahan])
-        
-        # Hapus stopwords menggunakan metode stopword remover dari self.stopword
         filtered_caption = self.stopword.remove_stopword(filtered_caption)
         await asyncio.sleep(2)
         return filtered_caption
 
+    async def stem_text(self, text):
+        \"""
+        Mengaplikasikan stemming pada teks menggunakan stemmer dari Sastrawi.
+        
+        Args:
+            text (str): Teks yang akan distem.
+        
+        Returns:
+            str: Teks yang telah distem.
+        \"""
+        stemmed_text = self.stemmer.stem(text)
+        await asyncio.sleep(2)
+        return stemmed_text
+
     async def clean_data(self, text):
-        """
-        Menggabungkan proses pembersihan teks, penggantian kata slang, penghapusan kalimat, 
-        dan penghapusan stopwords dalam satu fungsi.
-        
-        Args:
-            text (str): Teks yang akan diproses.
-        
-        Returns:
-            str: Teks yang telah melalui semua proses pembersihan.
-        """
-        cleaned_text = await self.clean_text(text) # memanggil fungsi text cleaning
-        replaced_text = await self.replace_slang_words(cleaned_text) # memanggil fungsi menormalisasikan slangword
-        without_sentence = await self.remove_sentence(replaced_text) # memanggil fungsi hapus sentence kurang samadengan 1
-        without_stopwords = await self.remove_stopwords(without_sentence) # memanggil fungsi menghapus stopwords
+        cleaned_text = await self.clean_text(text)
+        replaced_text = await self.replace_slang_words(cleaned_text)
+        stemmed_text = await self.stem_text(replaced_text)  # Menambahkan langkah stemming
+        without_sentence = await self.remove_sentence(stemmed_text)
+        without_stopwords = await self.remove_stopwords(without_sentence)
         return without_stopwords
-    
+
     async def process_texts(self, texts):
-        """
-        Memproses daftar teks secara asinkron untuk melakukan pembersihan teks.
-        
-        Args:
-            texts (list): Daftar teks yang akan diproses.
-        
-        Returns:
-            list: Daftar teks yang telah dibersihkan.
-        """
-        # Fungsi asinkron untuk memproses teks
         tasks = [self.clean_data(text) for text in texts]
         results = await asyncio.gather(*tasks)
         return results
-
-    '''async def process_texts(self, texts):
-        with ProcessPoolExecutor() as executor:
-            tasks = [self.clean_data(text) for text in texts]
-            results = await asyncio.gather(*tasks)
-        return results'''
+"""
