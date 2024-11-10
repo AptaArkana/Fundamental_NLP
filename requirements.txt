@@ -1,0 +1,7 @@
+rootutils
+sastrawi
+regex
+nltk
+emoji
+wordcloud
+nlp-id
